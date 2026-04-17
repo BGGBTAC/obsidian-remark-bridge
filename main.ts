@@ -40,13 +40,13 @@ export default class RemarkBridgePlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    this.addRibbonIcon("tablet", "Push current note to reMarkable", () => {
+    this.addRibbonIcon("tablet", "Push current note to tablet", () => {
       void this.pushActiveNote();
     });
 
     this.addCommand({
       id: "push-current-note",
-      name: "Push current note to reMarkable",
+      name: "Push current note to tablet",
       callback: () => {
         void this.pushActiveNote();
       },
@@ -61,7 +61,7 @@ export default class RemarkBridgePlugin extends Plugin {
     });
 
     this.statusBar = this.addStatusBarItem();
-    this.statusBar.setText("reMark: …");
+    this.statusBar.setText("Sync status unknown");
     this.statusBar.addClass("mod-clickable");
     this.statusBar.addEventListener("click", () => {
       void this.refreshStatus();
@@ -70,24 +70,26 @@ export default class RemarkBridgePlugin extends Plugin {
     this.addSettingTab(new RemarkBridgeSettingTab(this.app, this));
 
     // Poll every 60s once the plugin loads. The first tick fires
-    // immediately so the status bar doesn't show a stale "..."
+    // immediately so the status bar doesn't show a stale placeholder
     // until the next interval.
     void this.refreshStatus();
-    this.statusTimer = window.setInterval(() => {
-      void this.refreshStatus();
-    }, 60_000);
-    this.registerInterval(this.statusTimer);
+    this.statusTimer = this.registerInterval(
+      activeWindow.setInterval(() => {
+        void this.refreshStatus();
+      }, 60_000),
+    );
   }
 
   onunload() {
     if (this.statusTimer !== null) {
-      window.clearInterval(this.statusTimer);
+      activeWindow.clearInterval(this.statusTimer);
       this.statusTimer = null;
     }
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loaded = (await this.loadData()) as Partial<RemarkBridgeSettings> | null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
   }
 
   async saveSettings() {
@@ -114,12 +116,13 @@ export default class RemarkBridgePlugin extends Plugin {
         if (resp.status >= 400) {
           throw new Error(`HTTP ${resp.status}: ${resp.text?.slice(0, 200) ?? ""}`);
         }
-        return (resp.json ?? JSON.parse(resp.text || "{}")) as T;
+        const parsed: unknown = resp.json ?? JSON.parse(resp.text || "{}");
+        return parsed as T;
       } catch (err) {
         lastError = err;
         if (attempt < attempts - 1) {
           const wait = this.settings.retryDelayMs * Math.pow(2, attempt);
-          await new Promise((resolve) => setTimeout(resolve, wait));
+          await new Promise((resolve) => activeWindow.setTimeout(resolve, wait));
         }
       }
     }
@@ -134,12 +137,12 @@ export default class RemarkBridgePlugin extends Plugin {
   async pushActiveNote() {
     const active = this.app.workspace.getActiveFile();
     if (!active || !(active instanceof TFile)) {
-      new Notice("reMark: no active note to push");
+      new Notice("No active note to push");
       return;
     }
 
     if (!this.settings.apiToken) {
-      new Notice("reMark: set a bridge token in plugin settings first");
+      new Notice("Set a bridge token in plugin settings first");
       return;
     }
 
@@ -152,13 +155,13 @@ export default class RemarkBridgePlugin extends Plugin {
         throw: false,
       });
       if (data?.queued) {
-        new Notice(`reMark: queued "${active.basename}" for push`);
+        new Notice(`Queued "${active.basename}" for push`);
       } else {
-        new Notice(`reMark: push rejected — ${JSON.stringify(data)}`);
+        new Notice(`Push rejected — ${JSON.stringify(data)}`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      new Notice(`reMark: push failed — ${message}`);
+      new Notice(`Push failed — ${message}`);
     }
   }
 
@@ -166,7 +169,7 @@ export default class RemarkBridgePlugin extends Plugin {
     if (!this.statusBar) return;
 
     if (!this.settings.apiToken) {
-      this.statusBar.setText("reMark: no token");
+      this.statusBar.setText("No bridge token set");
       return;
     }
 
@@ -182,12 +185,12 @@ export default class RemarkBridgePlugin extends Plugin {
       const failed = queue.failed ?? 0;
       const pending = queue.pending ?? 0;
 
-      let label = `reMark: ${sync.synced ?? 0} synced`;
+      let label = `${sync.synced ?? 0} notes synced`;
       if (pending) label += ` · ${pending} pending`;
       if (failed) label += ` · ⚠ ${failed} failed`;
       this.statusBar.setText(label);
     } catch {
-      this.statusBar.setText("reMark: offline");
+      this.statusBar.setText("Bridge offline");
     }
   }
 }
@@ -195,6 +198,7 @@ export default class RemarkBridgePlugin extends Plugin {
 class RemarkBridgeSettingTab extends PluginSettingTab {
   plugin: RemarkBridgePlugin;
 
+  // eslint-disable-next-line obsidianmd/prefer-active-doc -- false positive on `constructor` keyword
   constructor(app: App, plugin: RemarkBridgePlugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -204,14 +208,13 @@ class RemarkBridgeSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    new Setting(containerEl).setName("reMark Bridge").setHeading();
+    new Setting(containerEl).setName("Connection").setHeading();
 
     new Setting(containerEl)
       .setName("Server URL")
-      .setDesc("Where the reMark Bridge web service is running. Include the scheme and port.")
+      .setDesc("Where the bridge web service is running. Include the scheme and port.")
       .addText((text) =>
         text
-          .setPlaceholder("http://localhost:8000")
           .setValue(this.plugin.settings.serverUrl)
           .onChange(async (value) => {
             this.plugin.settings.serverUrl = value.trim();
@@ -226,13 +229,14 @@ class RemarkBridgeSettingTab extends PluginSettingTab {
       )
       .addText((text) =>
         text
-          .setPlaceholder("paste the bearer token here")
           .setValue(this.plugin.settings.apiToken)
           .onChange(async (value) => {
             this.plugin.settings.apiToken = value.trim();
             await this.plugin.saveSettings();
           }),
       );
+
+    new Setting(containerEl).setName("Retries").setHeading();
 
     new Setting(containerEl)
       .setName("Retry attempts")
