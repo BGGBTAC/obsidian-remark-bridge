@@ -1,5 +1,4 @@
 import {
-  App,
   Notice,
   Plugin,
   PluginSettingTab,
@@ -196,16 +195,13 @@ export default class RemarkBridgePlugin extends Plugin {
 }
 
 class RemarkBridgeSettingTab extends PluginSettingTab {
-  plugin: RemarkBridgePlugin;
-
-  // eslint-disable-next-line obsidianmd/prefer-active-doc -- false positive on `constructor` keyword
-  constructor(app: App, plugin: RemarkBridgePlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
+  private get remarkPlugin(): RemarkBridgePlugin {
+    return this.plugin as RemarkBridgePlugin;
   }
 
   display(): void {
     const { containerEl } = this;
+    const plugin = this.remarkPlugin;
     containerEl.empty();
 
     new Setting(containerEl).setName("Connection").setHeading();
@@ -215,10 +211,10 @@ class RemarkBridgeSettingTab extends PluginSettingTab {
       .setDesc("Where the bridge web service is running. Include the scheme and port.")
       .addText((text) =>
         text
-          .setValue(this.plugin.settings.serverUrl)
+          .setValue(plugin.settings.serverUrl)
           .onChange(async (value) => {
-            this.plugin.settings.serverUrl = value.trim();
-            await this.plugin.saveSettings();
+            plugin.settings.serverUrl = value.trim();
+            await plugin.saveSettings();
           }),
       );
 
@@ -229,10 +225,10 @@ class RemarkBridgeSettingTab extends PluginSettingTab {
       )
       .addText((text) =>
         text
-          .setValue(this.plugin.settings.apiToken)
+          .setValue(plugin.settings.apiToken)
           .onChange(async (value) => {
-            this.plugin.settings.apiToken = value.trim();
-            await this.plugin.saveSettings();
+            plugin.settings.apiToken = value.trim();
+            await plugin.saveSettings();
           }),
       );
 
@@ -244,11 +240,11 @@ class RemarkBridgeSettingTab extends PluginSettingTab {
       .addSlider((slider) =>
         slider
           .setLimits(1, 6, 1)
-          .setValue(this.plugin.settings.retryAttempts)
+          .setValue(plugin.settings.retryAttempts)
           .setDynamicTooltip()
           .onChange(async (value) => {
-            this.plugin.settings.retryAttempts = value;
-            await this.plugin.saveSettings();
+            plugin.settings.retryAttempts = value;
+            await plugin.saveSettings();
           }),
       );
 
@@ -257,12 +253,12 @@ class RemarkBridgeSettingTab extends PluginSettingTab {
       .setDesc("First retry waits this long; subsequent retries double the delay.")
       .addText((text) =>
         text
-          .setValue(String(this.plugin.settings.retryDelayMs))
+          .setValue(String(plugin.settings.retryDelayMs))
           .onChange(async (value) => {
             const n = Number.parseInt(value, 10);
             if (Number.isFinite(n) && n > 0) {
-              this.plugin.settings.retryDelayMs = n;
-              await this.plugin.saveSettings();
+              plugin.settings.retryDelayMs = n;
+              await plugin.saveSettings();
             }
           }),
       );

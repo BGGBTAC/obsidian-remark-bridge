@@ -1,6 +1,6 @@
 {
   "name": "obsidian-remark-bridge",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Push notes to your reMarkable tablet via reMark Bridge",
   "main": "main.js",
   "scripts": {
