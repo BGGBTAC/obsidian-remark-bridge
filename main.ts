@@ -23,6 +23,15 @@ const DEFAULT_SETTINGS: RemarkBridgeSettings = {
   retryDelayMs: 2000,
 };
 
+interface BridgeStatusResponse {
+  sync?: { synced?: number };
+  queue?: { failed?: number; pending?: number };
+}
+
+interface BridgePushResponse {
+  queued?: boolean;
+}
+
 export default class RemarkBridgePlugin extends Plugin {
   settings: RemarkBridgeSettings = DEFAULT_SETTINGS;
   private statusBar: HTMLElement | null = null;
@@ -31,38 +40,46 @@ export default class RemarkBridgePlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    this.addRibbonIcon("tablet", "Push current note to reMarkable", async () => {
-      await this.pushActiveNote();
+    this.addRibbonIcon("tablet", "Push current note to reMarkable", () => {
+      void this.pushActiveNote();
     });
 
     this.addCommand({
       id: "push-current-note",
       name: "Push current note to reMarkable",
-      callback: () => this.pushActiveNote(),
+      callback: () => {
+        void this.pushActiveNote();
+      },
     });
 
     this.addCommand({
-      id: "refresh-sync-status",
-      name: "Refresh reMark Bridge status",
-      callback: () => this.refreshStatus(),
+      id: "refresh-status",
+      name: "Refresh sync status",
+      callback: () => {
+        void this.refreshStatus();
+      },
     });
 
     this.statusBar = this.addStatusBarItem();
     this.statusBar.setText("reMark: …");
     this.statusBar.addClass("mod-clickable");
-    this.statusBar.addEventListener("click", () => this.refreshStatus());
+    this.statusBar.addEventListener("click", () => {
+      void this.refreshStatus();
+    });
 
     this.addSettingTab(new RemarkBridgeSettingTab(this.app, this));
 
     // Poll every 60s once the plugin loads. The first tick fires
     // immediately so the status bar doesn't show a stale "..."
     // until the next interval.
-    this.refreshStatus();
-    this.statusTimer = window.setInterval(() => this.refreshStatus(), 60_000);
+    void this.refreshStatus();
+    this.statusTimer = window.setInterval(() => {
+      void this.refreshStatus();
+    }, 60_000);
     this.registerInterval(this.statusTimer);
   }
 
-  async onunload() {
+  onunload() {
     if (this.statusTimer !== null) {
       window.clearInterval(this.statusTimer);
       this.statusTimer = null;
@@ -84,7 +101,7 @@ export default class RemarkBridgePlugin extends Plugin {
     };
   }
 
-  private async bridgeRequest(params: RequestUrlParam): Promise<any> {
+  private async bridgeRequest<T>(params: RequestUrlParam): Promise<T> {
     // Retry with a short exponential back-off. `requestUrl` already
     // times out internally, so the only failures we catch here are
     // genuine network / server errors.
@@ -97,7 +114,7 @@ export default class RemarkBridgePlugin extends Plugin {
         if (resp.status >= 400) {
           throw new Error(`HTTP ${resp.status}: ${resp.text?.slice(0, 200) ?? ""}`);
         }
-        return resp.json ?? JSON.parse(resp.text || "{}");
+        return (resp.json ?? JSON.parse(resp.text || "{}")) as T;
       } catch (err) {
         lastError = err;
         if (attempt < attempts - 1) {
@@ -106,7 +123,12 @@ export default class RemarkBridgePlugin extends Plugin {
         }
       }
     }
-    throw lastError ?? new Error("Bridge request failed");
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+    throw new Error(
+      typeof lastError === "string" ? lastError : "Bridge request failed",
+    );
   }
 
   async pushActiveNote() {
@@ -122,7 +144,7 @@ export default class RemarkBridgePlugin extends Plugin {
     }
 
     try {
-      const data = await this.bridgeRequest({
+      const data = await this.bridgeRequest<BridgePushResponse>({
         url: `${this.settings.serverUrl.replace(/\/$/, "")}/api/push`,
         method: "POST",
         headers: this.authHeader(),
@@ -134,8 +156,9 @@ export default class RemarkBridgePlugin extends Plugin {
       } else {
         new Notice(`reMark: push rejected — ${JSON.stringify(data)}`);
       }
-    } catch (err: any) {
-      new Notice(`reMark: push failed — ${err?.message ?? err}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`reMark: push failed — ${message}`);
     }
   }
 
@@ -148,7 +171,7 @@ export default class RemarkBridgePlugin extends Plugin {
     }
 
     try {
-      const data = await this.bridgeRequest({
+      const data = await this.bridgeRequest<BridgeStatusResponse>({
         url: `${this.settings.serverUrl.replace(/\/$/, "")}/api/status`,
         method: "GET",
         headers: this.authHeader(),
@@ -163,7 +186,7 @@ export default class RemarkBridgePlugin extends Plugin {
       if (pending) label += ` · ${pending} pending`;
       if (failed) label += ` · ⚠ ${failed} failed`;
       this.statusBar.setText(label);
-    } catch (err: any) {
+    } catch {
       this.statusBar.setText("reMark: offline");
     }
   }
@@ -180,7 +203,8 @@ class RemarkBridgeSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "reMark Bridge" });
+
+    new Setting(containerEl).setName("reMark Bridge").setHeading();
 
     new Setting(containerEl)
       .setName("Server URL")
